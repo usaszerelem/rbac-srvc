@@ -35,7 +35,7 @@ mongod --config /usr/local/etc/mongod.conf
 -   CONSOLELOG_ENABLED=true - Whether all received and generated log should be output to the console
 -   FILELOG_ENABLED=false - Whether all received and generated log should be saved in a circular log file
 -   MONGOLOG_ENABLED=false - - Whether all received and generated log should be saved in the MongoDB database
--   SERVICE_NAME='rbac-srvc' - Name of the service. Used for logging and auditing.
+-   SERVICE_NAME='rbac-srvc/1.0.0' - Name and version of the service. Used for logging and auditing.
 -   PORT=3000 - Port number that the service should listen on.
 -   MONGODB_URL='mongodb://localhost:27017/productmanager' - MongoDB connection string
 -   AUDIT_URL='http://localhost:3001/api/v1/audit' - Audit service URL

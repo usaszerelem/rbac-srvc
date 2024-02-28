@@ -1,3 +1,5 @@
+import { RouteHandlingError } from '../startup/utils/RouteHandlingError';
+
 const mongoose = require('mongoose');
 const Joi = require('joi-oid');
 
@@ -29,5 +31,9 @@ export function validateService(srvc: typeof ServiceModel) {
         operations: Joi.array().items(),
     }).options({ allowUnknown: true });
 
-    return schema.validate(srvc);
+    const { error } = schema.validate(srvc);
+
+    if (error) {
+        throw new RouteHandlingError(400, error.details[0].message);
+    }
 }

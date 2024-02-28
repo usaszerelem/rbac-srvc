@@ -1,8 +1,8 @@
 import express, { Request, Response } from 'express';
 import AppLogger from '../startup/utils/Logger';
 import { Role } from '../models/roles';
-import { ErrorFormatter } from '../startup/utils/ErrorFormatter';
 import isValidApiKey from '../middleware/apiKeyValidate';
+import { RouteErrorFormatter } from '../startup/utils/RouteHandlingError';
 
 const router = express.Router();
 const logger = new AppLogger(module);
@@ -68,9 +68,9 @@ router.post('/', isValidApiKey, async (req: Request, res: Response) => {
 
         return res.status(201).json(srvcOpIds);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Service GET', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Role Expand POST');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 

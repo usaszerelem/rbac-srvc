@@ -2,9 +2,10 @@ import express, { Request, Response } from 'express';
 import AppLogger from '../startup/utils/Logger';
 import IServiceDto from '../dtos/IServiceDto';
 import { ServiceModel, validateService } from '../models/service';
-import { ErrorFormatter } from '../startup/utils/ErrorFormatter';
 import { IPagedDataReturn } from '../dtos/IPagedDataReturn';
 import isValidApiKey from '../middleware/apiKeyValidate';
+import { RouteErrorFormatter, RouteHandlingError } from '../startup/utils/RouteHandlingError';
+import { HttpMethod, sendAudit } from '../startup/utils/sendAudit';
 
 const router = express.Router();
 const logger = new AppLogger(module);
@@ -45,24 +46,20 @@ router.post('/', isValidApiKey, async (req: Request, res: Response) => {
         const newService: IServiceDto = { ...req.body };
         logger.info('New service create: ' + JSON.stringify(newService));
 
-        const { error } = validateService(newService);
-
-        if (error) {
-            const msg = error.details[0].message;
-            logger.error(msg);
-            return res.status(400).send(msg);
-        }
+        validateService(newService);
 
         let newServiceObj = new ServiceModel(newService);
         newServiceObj = await newServiceObj.save();
 
-        logger.info(`Service ${newServiceObj._id} created.`);
+        const msg = `Service ${newServiceObj._id} created.`;
+        logger.info(msg);
+        await sendAudit(HttpMethod.Post, msg);
 
         return res.status(201).json(newServiceObj);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Service POST', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Service POST');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -94,6 +91,8 @@ router.post('/', isValidApiKey, async (req: Request, res: Response) => {
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/IServiceResponseDto'
+ *       '404':
+ *         description: Service to add operation to could not be found.
  *       '500':
  *         description: Internal error.
  */
@@ -105,9 +104,7 @@ router.post('/operation', isValidApiKey, async (req: Request, res: Response) => 
         let srvc = await ServiceModel.findById(srvcOpAdd._id);
 
         if (srvc === null) {
-            const errMsg = `Service with id ${srvcOpAdd._id} not found`;
-            logger.error(errMsg);
-            return res.status(404).send(errMsg);
+            throw new RouteHandlingError(404, `Service with id ${srvcOpAdd._id} not found`);
         }
 
         for (let i = 0; i < srvcOpAdd.operations.length; i++) {
@@ -116,13 +113,15 @@ router.post('/operation', isValidApiKey, async (req: Request, res: Response) => 
 
         srvc = await srvc.save();
 
-        logger.info(`Service ${srvc._id} updated.`);
+        const msg = `Service ${srvc._id} updated.`;
+        logger.info(msg);
+        await sendAudit(HttpMethod.Post, msg);
 
         return res.status(201).json(srvc);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Service POST', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Service POST');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -168,10 +167,10 @@ router.put('/:id', isValidApiKey, async (req: Request, res: Response) => {
         let srvc = await ServiceModel.findById(serviceId);
 
         if (srvc === null) {
-            const errMsg = `Service with id ${serviceId} not found`;
-            logger.error(errMsg);
-            return res.status(404).send(errMsg);
+            throw new RouteHandlingError(404, `Service with id ${serviceId} not found`);
         }
+
+        srvc.name = srvcData.name;
 
         for (let i = 0; i < srvcData.operations.length; i++) {
             for (let j = 0; j < srvc.operations.length; j++) {
@@ -184,11 +183,12 @@ router.put('/:id', isValidApiKey, async (req: Request, res: Response) => {
 
         srvc = await srvc.save();
 
+        await sendAudit(HttpMethod.Put, `Updated service ID: ${serviceId}`);
         return res.status(201).json(srvc);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Service PUT', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Service PUT');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -217,14 +217,13 @@ router.delete('/:id', isValidApiKey, async (req: Request, res: Response) => {
     try {
         const serviceId = req.params.id;
         logger.info('Deleting service with ID: ' + serviceId);
-
         await ServiceModel.deleteOne({ _id: serviceId });
-
+        await sendAudit(HttpMethod.Delete, `Delete service ID: ${serviceId}`);
         return res.status(200).send('Success');
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Service DELETE', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Service DELETE');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -239,16 +238,14 @@ router.get('/:id', isValidApiKey, async (req: Request, res: Response) => {
         const srvc = await ServiceModel.findById(serviceId);
 
         if (srvc === null) {
-            const msg = `Service with ID ${serviceId} could not be found.`;
-            logger.error(msg);
-            return res.status(400).send(msg);
+            throw new RouteHandlingError(404, `Service with id ${serviceId} not found`);
         }
 
-        return res.status(201).json(srvc);
+        return res.status(200).json(srvc);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Service GET', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Service GET');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -258,18 +255,12 @@ router.get('/:id', isValidApiKey, async (req: Request, res: Response) => {
 router.get('/', isValidApiKey, async (req: Request, res: Response) => {
     try {
         logger.debug(`Services GET request`);
-
         const result = await getServices(req);
-
-        if (typeof result[1] === 'string') {
-            return res.status(result[0]).send(result[1]);
-        } else {
-            return res.status(result[0]).json(result[1]);
-        }
+        return res.status(200).json(result);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Service GET', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Service GET');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -280,16 +271,14 @@ router.get('/', isValidApiKey, async (req: Request, res: Response) => {
  * @returns touple with HTTP Status code as key and either an error or product
  * object as value.
  */
-async function getServices(req: Request): Promise<[number, IPagedDataReturn<IServiceDto> | string]> {
+async function getServices(req: Request): Promise<IPagedDataReturn<IServiceDto>> {
     const maxPageSize: number = 100;
     logger.debug('Inside getServicesByField');
 
     const pageSize: number = req.query.pageSize ? +req.query.pageSize : 10;
 
     if (pageSize > maxPageSize) {
-        const msg = `Payload too large. Max page size allowed is ${maxPageSize}`;
-        logger.error(msg);
-        return [413, msg];
+        throw new RouteHandlingError(413, `Payload too large. Max page size allowed is ${maxPageSize}`);
     }
 
     const pageNumber: number = req.query.pageNumber ? +req.query.pageNumber : 1;
@@ -307,7 +296,7 @@ async function getServices(req: Request): Promise<[number, IPagedDataReturn<ISer
 
     logger.debug('Returning: ' + JSON.stringify(response));
     logger.info('Success');
-    return [200, response];
+    return response;
 }
 
 /**

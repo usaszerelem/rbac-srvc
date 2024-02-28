@@ -2,10 +2,11 @@ import express, { Request, Response } from 'express';
 import AppLogger from '../startup/utils/Logger';
 import IRoleDto from '../dtos/IRoleDto';
 import { Role, validateRole } from '../models/roles';
-import { ErrorFormatter } from '../startup/utils/ErrorFormatter';
 import { buildResponse, validateServiceOps } from './serviceApi';
 import { IPagedDataReturn } from '../dtos/IPagedDataReturn';
 import isValidApiKey from '../middleware/apiKeyValidate';
+import { HttpMethod, sendAudit } from '../startup/utils/sendAudit';
+import { RouteErrorFormatter, RouteHandlingError } from '../startup/utils/RouteHandlingError';
 
 const router = express.Router();
 const logger = new AppLogger(module);
@@ -51,27 +52,25 @@ router.post('/', isValidApiKey, async (req: Request, res: Response) => {
         const { error } = validateRole(newRole);
 
         if (error) {
-            const msg = error.details[0].message;
-            logger.error(msg);
-            return res.status(400).send(msg);
+            throw new Error(error.details[0].message);
         }
 
         if ((await validateServiceOps(newRole.serviceOpIds)) === true) {
             let role = new Role(newRole);
             role = await role.save();
 
-            logger.info(`Role ${role._id} created.`);
+            const msg = `Role ${role._id}, ${role.name} created.`;
+            logger.info(msg);
+            await sendAudit(HttpMethod.Post, msg);
 
             return res.status(201).json(role);
         }
 
-        const msg = 'Service Operation ID validation failed';
-        logger.error(msg);
-        return res.status(400).send(msg);
+        throw new Error('Service Operation ID validation failed');
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Role POST', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Role POST');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -127,16 +126,15 @@ router.put('/:id', isValidApiKey, async (req: Request, res: Response) => {
                 new: true,
             });
 
+            await sendAudit(HttpMethod.Put, `Role ID: ${roleId} was updated.`);
             return res.status(200).json(role);
         }
 
-        const msg = 'Service Operation ID validation failed';
-        logger.error(msg);
-        return res.status(400).send(msg);
+        throw new RouteHandlingError(400, 'Service Operation ID validation failed');
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Role PUT', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Role PUT');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -181,16 +179,14 @@ router.get('/:id', isValidApiKey, async (req: Request, res: Response) => {
         const role = await Role.findById(roleId);
 
         if (role === null) {
-            const msg = `Role with ID ${roleId} could not be found.`;
-            logger.error(msg);
-            return res.status(400).send(msg);
+            throw new RouteHandlingError(400, `Role with ID ${roleId} could not be found.`);
         }
 
         return res.status(200).json(role);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Role GET', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Role GET');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -224,18 +220,12 @@ router.get('/:id', isValidApiKey, async (req: Request, res: Response) => {
 router.get('/', isValidApiKey, async (req: Request, res: Response) => {
     try {
         logger.debug(`Roles GET request`);
-
         const result = await getRoles(req);
-
-        if (typeof result[1] === 'string') {
-            return res.status(result[0]).send(result[1]);
-        } else {
-            return res.status(result[0]).json(result[1]);
-        }
+        return res.status(200).json(result);
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Role GET', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Role GET');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
@@ -272,32 +262,30 @@ router.delete('/:id', isValidApiKey, async (req: Request, res: Response) => {
         logger.info('Deleting service with ID: ' + roleId);
 
         await Role.deleteOne({ _id: roleId });
+        await sendAudit(HttpMethod.Delete, `Deleting service with ID: ${roleId}`);
 
         return res.status(201).send('Success');
     } catch (ex) {
-        const msg = ErrorFormatter('Fatal error in Role DELETE', ex, __filename);
-        logger.error(msg);
-        return res.status(500).send(msg);
+        const error = RouteErrorFormatter(ex, __filename, 'Fatal error Role DELETE');
+        logger.error(error.message);
+        return res.status(error.httpStatus).send(error.message);
     }
 });
 
 /**
  *
  * @param {req } - Request object so that we can access query parameters
- * @param field - Product object field that we would like to search on. As an example 'upc'
- * @returns touple with HTTP Status code as key and either an error or product
- * object as value.
+ * @param field - Field that we would like to search on. As an example 'upc'
+ * @returns Roles
  */
-async function getRoles(req: Request): Promise<[number, IPagedDataReturn<IRoleDto> | string]> {
+async function getRoles(req: Request): Promise<IPagedDataReturn<IRoleDto>> {
     const maxPageSize: number = 100;
     logger.debug('Inside getServicesByField');
 
     const pageSize: number = req.query.pageSize ? +req.query.pageSize : 10;
 
     if (pageSize > maxPageSize) {
-        const msg = `Payload too large. Max page size allowed is ${maxPageSize}`;
-        logger.error(msg);
-        return [413, msg];
+        throw new RouteHandlingError(413, `Payload too large. Max page size allowed is ${maxPageSize}`);
     }
 
     const pageNumber: number = req.query.pageNumber ? +req.query.pageNumber : 1;
@@ -305,17 +293,17 @@ async function getRoles(req: Request): Promise<[number, IPagedDataReturn<IRoleDt
     logger.debug(`pageNumber: ${pageNumber}`);
     logger.debug(`pageSize: ${pageSize}`);
 
-    const products = await Role.find({})
+    const roles = await Role.find({})
         .skip((pageNumber - 1) * pageSize)
         .limit(pageSize)
         .sort('{name: 1}');
 
     const fullUrl: string = req.protocol + '://' + req.get('host') + req.originalUrl;
-    const response = buildResponse<IRoleDto>(fullUrl, pageNumber, pageSize, products);
+    const response = buildResponse<IRoleDto>(fullUrl, pageNumber, pageSize, roles);
 
     logger.debug('Returning: ' + JSON.stringify(response));
     logger.info('Success');
-    return [200, response];
+    return response;
 }
 
 export default router;
